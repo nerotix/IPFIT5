@@ -4,6 +4,9 @@ import struct
 import redis
 from dpkt.udp import UDP
 
+#own modules import after this
+import config
+
 r_serv = redis.StrictRedis(host='localhost', port=6379, db=0)
 
 def int2ip(int_ip):
@@ -11,8 +14,10 @@ def int2ip(int_ip):
 
 
 def main():
+    eth = config.getSetting('setup', 'eth')
+    ignoredDomains = config.getSetting('setup', 'ignore').split(',')
     s = socket.socket(socket.PF_PACKET, socket.SOCK_RAW, socket.SOCK_DGRAM)
-    s.bind(('ens33', 0x0800))
+    s.bind((eth, 0x0800))
 
     global ipadr, dnsnamen
 
