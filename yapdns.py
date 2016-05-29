@@ -31,37 +31,40 @@ def main():
                 try:
                     dns = dpkt.dns.DNS(udp.data)
                     if dns.qr == 1:
-                        for rr in dns.an:
-                            if rr.type == 1:
-                                #IP-adres
-                                ipadr = int2ip(struct.unpack('>I', rr.rdata)[0])
-                                # dst_ip_addr_str = socket.inet_ntoa(ip.dst)
-                                # print dst_ip_addr_str
+                        srcip = socket.inet_ntoa(ip.dst)
+                        for answer in dns.an:
+                            if answer.type == 1:
+                                # IP-adres
+                                ipadr = int2ip(struct.unpack('>I', answer.rdata)[0])
                             else:
                                 # resource record
-                                rtype = rr.type
-                                print rtype
-
+                                # rtype = rr.type
+                                # print rtype
+                                continue
                 except Exception as e:
                     raise e
                 else:
-                    #dns
-                    dnsname = dns.qd[0].name
-                makeResponse(ipadr, dnsname)
+                    # dns
+                    # dnsname = dns.qd[0].name
+                    for qname in dns.qd:
+                        print qname.name
+                # makeResponse(srcip, ipadr, dnsname)
 
 class response(object):
-    IP = ""
+    SIP = ""
+    DIP = ""
     NA = ""
 
-    def __init__(self, IP, NA):
-        self.IP = IP
+    def __init__(self, SIP, DIP, NA):
+        self.SIP = SIP
+        self.DIP = DIP
         self.NA = NA
 
     def __repr__(self):
-        return "<%s %s>" % (self.IP, self.NA)
+        return "<%s %s %s>" % (self.SIP, self.DIP, self.NA)
 
-def makeResponse(IP, NA):
-    Response = response(IP, NA)
+def makeResponse(SIP, DIP, NA):
+    Response = response(SIP, DIP, NA)
     print Response
     return Response
 
