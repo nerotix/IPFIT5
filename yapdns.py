@@ -1,33 +1,26 @@
 import dpkt
+import redis
 import socket
 import struct
-import redis
 from dpkt.udp import UDP
-
-#own modules import after this
-import config
-
-r_serv = redis.StrictRedis(host='localhost', port=6379, db=0)
+from pymongo import MongoClient
 
 def int2ip(int_ip):
     return socket.inet_ntoa(struct.pack("!I", int_ip))
 
-
 def main():
-    eth = config.getSetting('setup', 'eth')
-    ignoredDomains = config.getSetting('setup', 'ignore').split(',')
     s = socket.socket(socket.PF_PACKET, socket.SOCK_RAW, socket.SOCK_DGRAM)
-    s.bind((eth, 0x0800))
+    s.bind(('ens33', 0x0800))
 
-    global ipadr, dnsnamen
+    global srcip, dnsnamen, dstip
 
     while True:
-        r_serv.flushall()
+        # r_serv.flushall()
         data, addr = s.recvfrom(1024)
         eth = dpkt.ethernet.Ethernet(data)
         ip = eth.data
         if isinstance(ip, str):
-            err_count += 1
+            # err_count += 1
             continue
         if type(ip.data) == UDP:
             udp = ip.data
@@ -36,41 +29,79 @@ def main():
                 try:
                     dns = dpkt.dns.DNS(udp.data)
                     if dns.qr == 1:
-                        srcip = socket.inet_ntoa(ip.dst)
+                        # destination ip van het pakketje
+                        dstip = socket.inet_ntoa(ip.dst)
                         for answer in dns.an:
                             if answer.type == 1:
-                                # IP-adres
-                                ipadr = int2ip(struct.unpack('>I', answer.rdata)[0])
+                                # source ip van het pakketje
+                                srcip = int2ip(struct.unpack('>I', answer.rdata)[0])
                             else:
                                 # resource record
                                 # rtype = rr.type
                                 # print rtype
                                 continue
                 except Exception as e:
-                    raise e
+                    #print e
+                    continue
                 else:
                     # dns
-                    # dnsname = dns.qd[0].name
-                    for qname in dns.qd:
-                        print qname.name
-                # makeResponse(srcip, ipadr, dnsname)
+                    dnsname = dns.qd[0].name
+                # print makeResponse(dstip, srcip, dnsname)
+                toRedis(makeResponse(dstip, srcip, dnsname))
 
+idCounter = 0
+def redisToMongo(pakket):
+    global idCounter
+    idCounter += 1
+    # connectie aanmaken met mongodb
+    client = MongoClient('localhost', 27017)
+    # db selecteren van mongodb
+    db = client.yapdns
+
+    #h etgeen wat we naar mongodb willen schrijven
+    pakketje = db.dnsinfo.insert_one(
+        { "_id": idCounter, "dnspack": pakket}
+    )
+
+    # print alles wat er in de collectie dnsinfo staat in de mongodb
+    dnspakketjes = db.dnsinfo.find({"_id": idCounter})
+    for docs in dnspakketjes:
+        print docs
+
+def toRedis(pakket):
+    #connectie opzetten voor redis
+    r_serv = redis.StrictRedis(host='localhost', port=6379, db=0)
+
+    # pushen van het object naar redis
+    r_serv.rpush("dnsanswer", pakket)
+    #print laatste dnsanswer in de list
+    # return r_serv.lindex("dnsanswer", -1)
+    redisToMongo(r_serv.lindex("dnsanswer", -1))
+
+    # command voor het wipen van de redis database
+    # r_serv.flushall()
+
+# klasse die geinstantieerd wordt door de functie makeResponce
 class response(object):
-    SIP = ""
-    DIP = ""
+    # destination ip van het pakketje
+    dstip = ""
+    # source ip van het pakketje
+    srcip = ""
+    # naam naam van de url die erbij hoort
     NA = ""
 
-    def __init__(self, SIP, DIP, NA):
-        self.SIP = SIP
-        self.DIP = DIP
+    def __init__(self, dstip, srcip, NA):
+        self.dstip = dstip
+        self.srcip = srcip
         self.NA = NA
 
     def __repr__(self):
-        return "<%s %s %s>" % (self.SIP, self.DIP, self.NA)
+        return "<%s %s %s>" % (self.dstip, self.srcip, self.NA)
 
-def makeResponse(SIP, DIP, NA):
-    Response = response(SIP, DIP, NA)
-    print Response
+# Deze functie maakt een instantie van de response classe
+def makeResponse(dstip, srcip, NA):
+    Response = response(dstip, srcip, NA)
+
     return Response
 
 if __name__ == '__main__':
