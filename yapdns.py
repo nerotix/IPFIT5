@@ -2,24 +2,16 @@ import dpkt
 import redis
 import socket
 import struct
+import json
 from dpkt.udp import UDP
 from pymongo import MongoClient
-
-#own modules:
-import config
 
 def int2ip(int_ip):
     return socket.inet_ntoa(struct.pack("!I", int_ip))
 
 def main():
     s = socket.socket(socket.PF_PACKET, socket.SOCK_RAW, socket.SOCK_DGRAM)
-
-    # grabs the eth port to bind and the list of ignored domains from the config using the config.py module.
-    eth = config.getSetting('setup', 'eth')
-    ignoredDomains = config.getSetting('setup', 'ignore').split(',')
-    s = socket.socket(socket.PF_PACKET, socket.SOCK_RAW, socket.SOCK_DGRAM)
-    s.bind((eth, 0x0800))
-
+    s.bind(('ens33', 0x0800))
 
     global srcip, dnsnamen, dstip
 
@@ -55,8 +47,10 @@ def main():
                 else:
                     # dns
                     dnsname = dns.qd[0].name
-                # print makeResponse(dstip, srcip, dnsname)
-                toRedis(makeResponse(dstip, srcip, dnsname))
+
+                createObj = response(dstip, srcip, dnsname)
+                jsonwrap = json.dumps(createObj.__dict__)
+                toRedis(jsonwrap)
 
 idCounter = 0
 def redisToMongo(pakket):
@@ -92,12 +86,6 @@ def toRedis(pakket):
 
 # klasse die geinstantieerd wordt door de functie makeResponce
 class response(object):
-    # destination ip van het pakketje
-    dstip = ""
-    # source ip van het pakketje
-    srcip = ""
-    # naam naam van de url die erbij hoort
-    NA = ""
 
     def __init__(self, dstip, srcip, NA):
         self.dstip = dstip
@@ -106,12 +94,6 @@ class response(object):
 
     def __repr__(self):
         return "<%s %s %s>" % (self.dstip, self.srcip, self.NA)
-
-# Deze functie maakt een instantie van de response classe
-def makeResponse(dstip, srcip, NA):
-    Response = response(dstip, srcip, NA)
-
-    return Response
 
 if __name__ == '__main__':
     main()
