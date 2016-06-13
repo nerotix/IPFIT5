@@ -3,6 +3,7 @@ Talks to the virustotal API and gets json back. Only implemented IP and domain l
 """
 
 import urllib2
+import urllib
 import time
 
 
@@ -39,11 +40,12 @@ class VirusTotalQuery:
             url = "domain/report"
 
         parameters = {type: request, "apikey": self.apikey}
-        data = urllib2.urlencode(parameters)
+        data = urllib.urlencode(parameters)
         req = urllib2.Request(self.endpoint+url, data)
         response = urllib2.urlopen(req)
         json = response.read()
         return json
+
 
 
 

@@ -14,6 +14,7 @@ def int2ip(int_ip):
 
 
 def main():
+    # grabs the eth port to bind and the list of ignored domains from the config using the config.py module.
     eth = config.getSetting('setup', 'eth')
     ignoredDomains = config.getSetting('setup', 'ignore').split(',')
     s = socket.socket(socket.PF_PACKET, socket.SOCK_RAW, socket.SOCK_DGRAM)
