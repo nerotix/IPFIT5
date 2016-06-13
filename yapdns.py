@@ -5,12 +5,21 @@ import struct
 from dpkt.udp import UDP
 from pymongo import MongoClient
 
+#own modules:
+import config
+
 def int2ip(int_ip):
     return socket.inet_ntoa(struct.pack("!I", int_ip))
 
 def main():
     s = socket.socket(socket.PF_PACKET, socket.SOCK_RAW, socket.SOCK_DGRAM)
-    s.bind(('ens33', 0x0800))
+
+    # grabs the eth port to bind and the list of ignored domains from the config using the config.py module.
+    eth = config.getSetting('setup', 'eth')
+    ignoredDomains = config.getSetting('setup', 'ignore').split(',')
+    s = socket.socket(socket.PF_PACKET, socket.SOCK_RAW, socket.SOCK_DGRAM)
+    s.bind((eth, 0x0800))
+
 
     global srcip, dnsnamen, dstip
 
