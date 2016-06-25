@@ -6,7 +6,6 @@ import urllib2
 import urllib
 import time
 
-
 class VirusTotalQuery:
 
     def __init__(self, endpoint, apikey, reqLimit, reqTime):
@@ -40,9 +39,7 @@ class VirusTotalQuery:
             url = "domain/report"
 
         parameters = {type: request, "apikey": self.apikey}
-        data = urllib.urlencode(parameters)
-        req = urllib2.Request(self.endpoint+url, data)
-        response = urllib2.urlopen(req)
+        response = urllib.urlopen('%s?%s' % (self.endpoint+url, urllib.urlencode(parameters)))
         json = response.read()
         return json
 
