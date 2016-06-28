@@ -18,6 +18,15 @@ import pprint
 # connectie opzetten voor redis
 r_serv = redis.StrictRedis(host='localhost', port=6379, db=0)
 
+# connectie opzetten voor mongo
+MongoAddress = config.getSetting('mongo', 'address')
+MongoPort = config.getSetting('mongo', 'port')
+MongoUser = config.getSetting('mongo', 'user')
+MongoPass = config.getSetting('mongo', 'password')
+mongoClient = MongoClient('mongodb://'+MongoUser+':' + MongoPass + '@' +MongoAddress+":"+MongoPort)
+#'mongodb://admin:admin123@localhost:27017'
+#mongoClient = MongoClient("mongodb://"+MongoAddress+":"+MongoPort)
+
 def int2ip(int_ip):
     return socket.inet_ntoa(struct.pack("!I", int_ip))
 
@@ -86,16 +95,25 @@ def toRedis(dstip, srcip, dnsname):
 
         print r_serv.hget("_id" + str(teller), "source")
 
-        # haalt info vanuit farsight op
-        try:
-            fsThread = threading.Thread(target=FSHandler, args=(answer["source"],))
-            fsThread.start()
-        except Exception:
-            pass
+        # haalt info vanuit farsight op, moet mogelijk in try/except block?
+        #fsThread = threading.Thread(target=FSHandler, args=(answer["source"],))
+        #fsThread.start()
+
+        awThread = threading.Thread(target=apiWatcher, args=(vtThread, teller))
+        awThread.start()
+
 
         # print r_serv.hgetall("_id" + str(teller))
 
 ipTeller = 0
+
+def apiWatcher(vtThread, id):
+    vtThread.join()
+    #fsThread.join()
+    toMongo(teller)
+    print "ik heb iets naar mongo geschreven"
+
+
 def FSHandler(srcip):
     global ipTeller
 
@@ -143,6 +161,13 @@ class response(object):
 
     def __repr__(self):
         return "<%s %s %s>" % (self.dstip, self.srcip, self.NA, self.FAR, self.VT)
+
+def toMongo(id):
+    db = mongoClient.yapdns
+    db.dnsinfo.insert_one(
+       r_serv.hgetall("_id" + str(id))
+    )
+
 
 if __name__ == '__main__':
     main()
