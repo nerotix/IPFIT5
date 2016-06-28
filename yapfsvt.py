@@ -13,6 +13,7 @@ from pymongo import MongoClient
 
 #own imports
 import config
+import pprint
 
 # connectie opzetten voor redis
 r_serv = redis.StrictRedis(host='localhost', port=6379, db=0)
@@ -83,13 +84,15 @@ def toRedis(dstip, srcip, dnsname):
                            "vt", VTHandler(r_serv.hget("_id" + str(teller), "source"))))
         vtThread.start()
 
+        print r_serv.hget("_id" + str(teller), "source")
+
         # haalt info vanuit farsight op
         try:
-            fsThread = threading.Thread(target=FSHandler(r_serv.hget("_id" + str(teller), "source")))
+            fsThread = threading.Thread(target=FSHandler, args=(answer["source"],))
             fsThread.start()
         except Exception:
             pass
-        # time.sleep(0.5)
+
         # print r_serv.hgetall("_id" + str(teller))
 
 ipTeller = 0
@@ -114,7 +117,7 @@ def FSHandler(srcip):
             # print r_serv.hget("ipID" + str(ipTeller), "IP")
             asnInfo = geo.org_by_addr(r_serv.hget("ipID" + str(ipTeller), "IP"))
             r_serv.hset("asnID" + str(ipTeller), "ASN", asnInfo)
-            print r_serv.hget("asnID" + str(ipTeller), "ASN")
+            # print r_serv.hget("asnID" + str(ipTeller), "ASN")
             print len(r_serv.hgetall("asnID" + str(ipTeller)))
 
 def VTHandler(srcip):
