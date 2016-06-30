@@ -2,6 +2,7 @@ import dpkt
 import redis
 import socket
 import struct
+import config
 import time
 import json
 import threading
@@ -11,12 +12,12 @@ import virustotal_query as vtReq
 from dpkt.udp import UDP
 from pymongo import MongoClient
 
-#own imports
-import config
-import pprint
 
 # connectie opzetten voor redis
-r_serv = redis.StrictRedis(host='localhost', port=6379, db=0)
+r_serv = redis.StrictRedis(
+    host=config.getSetting('redis', 'address'),
+    port=config.getSetting('redis', 'port'),
+    db=config.getSetting('redis', 'db'))
 
 # connectie opzetten voor mongo
 MongoAddress = config.getSetting('mongo', 'address')
@@ -24,11 +25,10 @@ MongoPort = config.getSetting('mongo', 'port')
 MongoUser = config.getSetting('mongo', 'user')
 MongoPass = config.getSetting('mongo', 'password')
 mongoClient = MongoClient('mongodb://'+MongoUser+':' + MongoPass + '@' +MongoAddress+":"+MongoPort)
-#'mongodb://admin:admin123@localhost:27017'
-#mongoClient = MongoClient("mongodb://"+MongoAddress+":"+MongoPort)
 
 def int2ip(int_ip):
     return socket.inet_ntoa(struct.pack("!I", int_ip))
+
 
 def main():
     # grabs the eth port to bind and the list of ignored domains from the config using the config.py module.
@@ -77,6 +77,8 @@ def main():
                 toRedis(dstip, srcip, dnsname)
 
 teller = 0
+
+
 def toRedis(dstip, srcip, dnsname):
     global teller
 
@@ -93,23 +95,21 @@ def toRedis(dstip, srcip, dnsname):
                            "vt", VTHandler(r_serv.hget("_id" + str(teller), "source"))))
         vtThread.start()
 
-        print r_serv.hget("_id" + str(teller), "source")
-
         # haalt info vanuit farsight op, moet mogelijk in try/except block?
-        #fsThread = threading.Thread(target=FSHandler, args=(answer["source"],))
-        #fsThread.start()
+        fsThread = threading.Thread(target=FSHandler, args=(answer["source"],))
+        fsThread.start()
 
-        awThread = threading.Thread(target=apiWatcher, args=(vtThread, teller))
+        awThread = threading.Thread(target=apiWatcher, args=(vtThread, fsThread,  teller))
         awThread.start()
-
 
         # print r_serv.hgetall("_id" + str(teller))
 
 ipTeller = 0
 
-def apiWatcher(vtThread, id):
+
+def apiWatcher(vtThread, fsThread, id):
     vtThread.join()
-    #fsThread.join()
+    fsThread.join()
     toMongo(teller)
     print "ik heb iets naar mongo geschreven"
 
@@ -136,7 +136,12 @@ def FSHandler(srcip):
             asnInfo = geo.org_by_addr(r_serv.hget("ipID" + str(ipTeller), "IP"))
             r_serv.hset("asnID" + str(ipTeller), "ASN", asnInfo)
             # print r_serv.hget("asnID" + str(ipTeller), "ASN")
-            print len(r_serv.hgetall("asnID" + str(ipTeller)))
+            # print len(r_serv.hgetall("asnID" + str(ipTeller)))
+            if len(r_serv.hgetall("asnID" + str(ipTeller))) >= 5:
+                r_serv.hset("_id" + str(teller), "fs", "FastFlux")
+            else:
+                r_serv.hset("_id" + str(teller), "fs", "Clean")
+
 
 def VTHandler(srcip):
 
@@ -148,6 +153,7 @@ def VTHandler(srcip):
     )
 
     return request.handleRequest("url", srcip)
+
 
 # klasse voor het maken van een object
 class response(object):
@@ -161,6 +167,7 @@ class response(object):
 
     def __repr__(self):
         return "<%s %s %s>" % (self.dstip, self.srcip, self.NA, self.FAR, self.VT)
+
 
 def toMongo(id):
     db = mongoClient.yapdns
