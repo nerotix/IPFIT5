@@ -1,0 +1,19 @@
+misc:
+    dindex:
+        name: yapdns
+        as: yapdns
+    ctype:
+        name: dnsinfo
+        as: dnsinfo
+    direction: me
+mongo:
+    host: localhost
+    port: 27017
+    auth:
+       user: 
+       pwd: 
+       source: admin
+       mechanism: scram-sha-1
+elastic:
+    host: localhost
+    port: 9300
