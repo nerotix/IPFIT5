@@ -80,8 +80,9 @@ def main():
                 # createObj = response(dstip, srcip, dnsname)
                 # jsonwrap = json.dumps(createObj.__dict__)
                 # toRedis(jsonwrap)
-                timestamp = datetime.datetime.now()
-                toRedis(dstip, srcip, dnsname, timestamp)
+                now = datetime.datetime.utcnow()
+                ltime = now.strftime("%Y-%m-%dT%H:%M:%S") + ".%03d" % (now.microsecond / 1000) + "Z"
+                toRedis(dstip, srcip, dnsname, ltime)
 
 teller = 0
 
