@@ -11,6 +11,12 @@ import dnsdb_query as fsReq
 import virustotal_query as vtReq
 from dpkt.udp import UDP
 from pymongo import MongoClient
+import datetime
+import hashlib
+import logging
+
+#   setup for logging
+logging.basicConfig(filename='recordIntegrity.log', format='%(message)s', level=logging.DEBUG)
 
 
 # connectie opzetten voor redis
@@ -74,12 +80,13 @@ def main():
                 # createObj = response(dstip, srcip, dnsname)
                 # jsonwrap = json.dumps(createObj.__dict__)
                 # toRedis(jsonwrap)
-                toRedis(dstip, srcip, dnsname)
+                timestamp = datetime.datetime.now()
+                toRedis(dstip, srcip, dnsname, timestamp)
 
 teller = 0
 
 
-def toRedis(dstip, srcip, dnsname):
+def toRedis(dstip, srcip, dnsname, timestamp):
     global teller
 
     ignoreDom = config.getSetting('setup', 'ignore')
@@ -88,7 +95,7 @@ def toRedis(dstip, srcip, dnsname):
         pass
     else:
         teller += 1
-        answer = {"_id": teller, "destination": dstip, "source": srcip, "name": dnsname}
+        answer = {"_id": teller, "destination": dstip, "source": srcip, "name": dnsname, "timestamp": timestamp}
         r_serv.hmset("_id" + str(teller), answer)
 
         vtThread = threading.Thread(target=r_serv.hset, args=("_id" + str(teller),
@@ -106,12 +113,18 @@ def toRedis(dstip, srcip, dnsname):
 
 ipTeller = 0
 
+def hasher(record):
+    hash_object = hashlib.md5(repr(record))
+    hash = hash_object.hexdigest()
+    #print "ID: " + record["_id"] + " hash: " + hash
+    logging.info("ID: " + record["_id"] + " MD5: " + hash)
+
 
 def apiWatcher(vtThread, fsThread, id):
     vtThread.join()
     fsThread.join()
     toMongo(teller)
-    print "ik heb iets naar mongo geschreven"
+    #print "ik heb iets naar mongo geschreven"
 
 
 def FSHandler(srcip):
@@ -174,6 +187,11 @@ def toMongo(id):
     db.dnsinfo.insert_one(
        r_serv.hgetall("_id" + str(id))
     )
+
+    hasher(
+        r_serv.hgetall("_id" + str(id))
+    )
+
 
 
 if __name__ == '__main__':
