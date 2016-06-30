@@ -16,7 +16,11 @@ import config
 import pprint
 
 # connectie opzetten voor redis
-r_serv = redis.StrictRedis(host='localhost', port=6379, db=0)
+# connectie opzetten voor redis
+r_serv = redis.StrictRedis(
+    host=config.getSetting("redis", "address"),
+    port=config.getSetting("redis", "port"),
+    db=config.getSetting("redis", "db"))
 
 # connectie opzetten voor mongo
 MongoAddress = config.getSetting('mongo', 'address')
@@ -110,7 +114,7 @@ ipTeller = 0
 def apiWatcher(vtThread, id):
     vtThread.join()
     #fsThread.join()
-    toMongo(teller)
+    toMongo(id)
     print "ik heb iets naar mongo geschreven"
 
 
