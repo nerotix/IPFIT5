@@ -32,6 +32,7 @@ MongoUser = config.getSetting('mongo', 'user')
 MongoPass = config.getSetting('mongo', 'password')
 mongoClient = MongoClient('mongodb://'+MongoUser+':' + MongoPass + '@' +MongoAddress+":"+MongoPort)
 
+
 def int2ip(int_ip):
     return socket.inet_ntoa(struct.pack("!I", int_ip))
 
@@ -50,11 +51,9 @@ def main():
         eth = dpkt.ethernet.Ethernet(data)
         ip = eth.data
         if isinstance(ip, str):
-            # err_count += 1
             continue
         if type(ip.data) == UDP:
             udp = ip.data
-            # print repr(udp)
             if udp.sport == 53:
                 try:
                     dns = dpkt.dns.DNS(udp.data)
@@ -66,9 +65,6 @@ def main():
                                 # source ip van het pakketje
                                 srcip = int2ip(struct.unpack('>I', answer.rdata)[0])
                             else:
-                                # resource record
-                                # rtype = rr.type
-                                # print rtype
                                 continue
                 except Exception as e:
                     #print e
@@ -76,10 +72,6 @@ def main():
                 else:
                     # dns
                     dnsname = dns.qd[0].name
-
-                # createObj = response(dstip, srcip, dnsname)
-                # jsonwrap = json.dumps(createObj.__dict__)
-                # toRedis(jsonwrap)
                 now = datetime.datetime.utcnow()
                 ltime = now.strftime("%Y-%m-%dT%H:%M:%S") + ".%03d" % (now.microsecond / 1000) + "Z"
                 toRedis(dstip, srcip, dnsname, ltime)
@@ -100,7 +92,7 @@ def toRedis(dstip, srcip, dnsname, timestamp):
         r_serv.hmset("_id" + str(teller), answer)
 
         vtThread = threading.Thread(target=r_serv.hset, args=("_id" + str(teller),
-                           "vt", VTHandler(r_serv.hget("_id" + str(teller), "source"))))
+                           "vt", VTHandler(r_serv.hget("_id" + str(teller), "name"))))
         vtThread.start()
 
         # haalt info vanuit farsight op, moet mogelijk in try/except block?
@@ -110,7 +102,7 @@ def toRedis(dstip, srcip, dnsname, timestamp):
         awThread = threading.Thread(target=apiWatcher, args=(vtThread, fsThread,  teller))
         awThread.start()
 
-        # print r_serv.hgetall("_id" + str(teller))
+        print r_serv.hgetall("_id" + str(teller))
 
 ipTeller = 0
 
@@ -124,7 +116,7 @@ def hasher(record):
 def apiWatcher(vtThread, fsThread, id):
     vtThread.join()
     fsThread.join()
-    toMongo(teller)
+    toMongo(id)
     #print "ik heb iets naar mongo geschreven"
 
 
@@ -138,26 +130,26 @@ def FSHandler(srcip):
 
     geo = pygeoip.GeoIP("GeoIPASNum.dat")
     ipTeller += 1
-    for rrset in request.query_rdata_ip(srcip):
-        fsinfo = rrset.get("rdata")
-        answer = {"_id": ipTeller, "IP": fsinfo}
+    try:
+        for rrset in request.query_rdata_ip(srcip):
+            fsinfo = rrset.get("rdata")
+            answer = {"_id": ipTeller, "IP": fsinfo}
 
-        if r_serv.hget("ipID" + str(ipTeller), "IP") == fsinfo:
-            pass
-        else:
-            r_serv.hmset("ipID" + str(ipTeller), answer)
-            # print r_serv.hget("ipID" + str(ipTeller), "IP")
-            asnInfo = geo.org_by_addr(r_serv.hget("ipID" + str(ipTeller), "IP"))
-            r_serv.hset("asnID" + str(ipTeller), "ASN", asnInfo)
-            # print r_serv.hget("asnID" + str(ipTeller), "ASN")
-            # print len(r_serv.hgetall("asnID" + str(ipTeller)))
-            if len(r_serv.hgetall("asnID" + str(ipTeller))) >= 5:
-                r_serv.hset("_id" + str(teller), "fs", "FastFlux")
+            if r_serv.hget("ipID" + str(ipTeller), "IP") == fsinfo:
+                pass
             else:
-                r_serv.hset("_id" + str(teller), "fs", "Clean")
+                r_serv.hmset("ipID" + str(ipTeller), answer)
+                asnInfo = geo.org_by_addr(r_serv.hget("ipID" + str(ipTeller), "IP"))
+                r_serv.hset("asnID" + str(ipTeller), "ASN", asnInfo)
+                if len(r_serv.hgetall("asnID" + str(ipTeller))) >= 5:
+                    r_serv.hset("_id" + str(teller), "fs", "FastFlux")
+                else:
+                    r_serv.hset("_id" + str(teller), "fs", "Clean")
+    except Exception:
+        pass
 
 
-def VTHandler(srcip):
+def VTHandler(name):
 
     request = vtReq.VirusTotalQuery(
         endpoint=config.getSetting("virustotal", "endpoint"),
@@ -166,21 +158,16 @@ def VTHandler(srcip):
         reqTime=config.getSetting("virustotal", "reqTimeframe")
     )
 
-    return request.handleRequest("url", srcip)
-
-
-# klasse voor het maken van een object
-class response(object):
-
-    def __init__(self, dstip, srcip, NA, FAR, VT):
-        self.dstip = dstip
-        self.srcip = srcip
-        self.NA = NA
-        self.FAR = FAR
-        self.VT = VT
-
-    def __repr__(self):
-        return "<%s %s %s>" % (self.dstip, self.srcip, self.NA, self.FAR, self.VT)
+    vtPos = request.handleRequest("url", name)
+    respCode = json.loads(vtPos)['response_code']
+    if respCode == 1:
+        posHits = json.loads(vtPos)['positives']
+        if posHits >= 1:
+            return int((json.loads(vtPos)['positives']))
+        else:
+            return "No hits!"
+    else:
+        return "IP Not found in DB."
 
 
 def toMongo(id):
@@ -192,7 +179,6 @@ def toMongo(id):
     hasher(
         r_serv.hgetall("_id" + str(id))
     )
-
 
 
 if __name__ == '__main__':
