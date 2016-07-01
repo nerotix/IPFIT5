@@ -10,14 +10,41 @@ import pygeoip
 import dnsdb_query as fsReq
 import virustotal_query as vtReq
 from dpkt.udp import UDP
-from pymongo import MongoClient
+import pymongo
 import datetime
 import hashlib
 import logging
+import sys
 
-#   setup for logging
-logging.basicConfig(filename='recordIntegrity.log', format='%(message)s', level=logging.DEBUG)
 
+#   setup for logging, one log for the program and one for logging hashes as integrity check.
+logFormatter = logging.Formatter('%(asctime)s %(levelname)s %(message)s')
+consoleFormatter = logging.Formatter('%(levelname)-8s %(message)s')
+# The program logger, gets two handlers, one for console one for the file:
+logger = logging.getLogger('logger')
+
+# the file handler
+fileHandler = logging.FileHandler('yapdns.log')
+fileHandler.setFormatter(logFormatter)
+
+# the console handler
+console = logging.StreamHandler()
+console.setFormatter(consoleFormatter)
+
+# add both handlers to the logger
+logger.addHandler(console)
+logger.addHandler(fileHandler)
+
+# set the level of logging to INFO
+logger.setLevel(logging.INFO)
+
+# integrity logger
+integrityLogFormatter = logging.Formatter('%(message)s')
+integrityLogger = logging.getLogger('record_integrity_logger')
+integrityHandler = logging.FileHandler('recordIntegrity.log')
+integrityHandler.setFormatter(integrityLogFormatter)
+integrityLogger.addHandler(integrityHandler)
+integrityLogger.setLevel(logging.INFO)
 
 # connectie opzetten voor redis
 r_serv = redis.StrictRedis(
@@ -25,12 +52,30 @@ r_serv = redis.StrictRedis(
     port=config.getSetting('redis', 'port'),
     db=config.getSetting('redis', 'db'))
 
+# test the reddis connection, log if needed.
+try:
+    response = r_serv.client_list()
+    logger.info("Connected to redis")
+except redis.ConnectionError:
+    logger.critical("Failed to connect to redis")
+    sys.exit()
+
 # connectie opzetten voor mongo
 MongoAddress = config.getSetting('mongo', 'address')
 MongoPort = config.getSetting('mongo', 'port')
 MongoUser = config.getSetting('mongo', 'user')
 MongoPass = config.getSetting('mongo', 'password')
-mongoClient = MongoClient('mongodb://'+MongoUser+':' + MongoPass + '@' +MongoAddress+":"+MongoPort)
+mongoTimeout = config.getSetting('mongo', 'timeout')
+
+# test the mongo connection, kill the program if it fails
+try:
+    mongoClient = pymongo.MongoClient('mongodb://'+MongoUser+':' + MongoPass + '@' +MongoAddress+":"+MongoPort,
+                                      serverSelectionTimeoutMS=mongoTimeout)
+    mongoClient.server_info()
+    logger.info("Connected to mongo")
+except pymongo.errors.ServerSelectionTimeoutError as err:
+    logger.critical("There is a problem with mongo: " + str(err))
+    sys.exit()
 
 
 def int2ip(int_ip):
@@ -38,6 +83,8 @@ def int2ip(int_ip):
 
 
 def main():
+
+    checkIntegrity()
     # grabs the eth port to bind and the list of ignored domains from the config using the config.py module.
     eth = config.getSetting('setup', 'eth')
     # ignoredDomains = config.getSetting('setup', 'ignore').split(',')
@@ -76,7 +123,12 @@ def main():
                 ltime = now.strftime("%Y-%m-%dT%H:%M:%S") + ".%03d" % (now.microsecond / 1000) + "Z"
                 toRedis(dstip, srcip, dnsname, ltime)
 
-teller = 0
+db = mongoClient.yapdns
+idList = list(db.dnsinfo.find({}, "_id"))
+if idList.__len__() > 0:
+    teller = int(idList[-1]['_id'])
+else:
+    teller = 0
 
 
 def toRedis(dstip, srcip, dnsname, timestamp):
@@ -102,15 +154,36 @@ def toRedis(dstip, srcip, dnsname, timestamp):
         awThread = threading.Thread(target=apiWatcher, args=(vtThread, fsThread,  teller))
         awThread.start()
 
-        print r_serv.hgetall("_id" + str(teller))
+        #print r_serv.hgetall("_id" + str(teller))
 
 ipTeller = 0
 
 def hasher(record):
-    hash_object = hashlib.md5(repr(record))
+    tohash = record['_id'] + record['source'] + record['destination'] + record['timestamp']
+    hash_object = hashlib.md5(tohash)
     hash = hash_object.hexdigest()
-    #print "ID: " + record["_id"] + " hash: " + hash
-    logging.info("ID: " + record["_id"] + " MD5: " + hash)
+    integrityLogger.info("ID: " + record["_id"] + " MD5: " + hash)
+
+
+def checkIntegrity():
+    with open('recordIntegrity.log') as f:
+        for line in f:
+            list = line.split()
+            id = list[1]
+            md5 = list[3]
+            db = mongoClient.yapdns
+            record = db.dnsinfo.find_one({"_id":id})
+            #build something to base the hash on
+            tohash = record['_id'] + record['source'] + record['destination'] + record['timestamp']
+            hash_object = hashlib.md5(tohash)
+            hash = hash_object.hexdigest()
+            if hash == md5:
+                print id+ " checks out"
+            else:
+                print id + " does not check out"
+
+
+
 
 
 def apiWatcher(vtThread, fsThread, id):
@@ -172,13 +245,10 @@ def VTHandler(name):
 
 def toMongo(id):
     db = mongoClient.yapdns
-    db.dnsinfo.insert_one(
-       r_serv.hgetall("_id" + str(id))
-    )
-
-    hasher(
-        r_serv.hgetall("_id" + str(id))
-    )
+    record = r_serv.hgetall("_id" + str(id))
+    db.dnsinfo.insert_one(record)
+    # build something to base the hash on
+    hasher(record)
 
 
 if __name__ == '__main__':
