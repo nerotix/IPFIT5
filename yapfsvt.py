@@ -2,8 +2,7 @@ import dpkt
 import redis
 import socket
 import struct
-import config
-import time
+import ConfigParser
 import json
 import threading
 import pygeoip
@@ -15,7 +14,49 @@ import datetime
 import hashlib
 import logging
 import sys
+import argparse
 
+# code for parsing startup arguments:
+# create the parser
+parser = argparse.ArgumentParser(description='Welcome to YapDNS, a passive DNS sniffer combined with automated'+
+                                             ' analysis, and presentation of this data')
+
+# add additional arguments to the parser
+parser.add_argument('-ic', '--checkIntegrity',
+                    help='Check the integrity of logged record hashes against the records in the database',
+                    action="store_true"
+                    )
+parser.add_argument('-c', '--config',
+                    help='Give the location of config.ini, if non given same dir as the program is assumed',
+                    )
+
+# get the arguments given at startup and store them in args
+args = parser.parse_args()
+
+
+# code for reading the config:
+def getConfig():
+    """
+    :return: the config object
+    """
+    config = ConfigParser.ConfigParser()
+    if args.config:
+        config.read(args.config[0])
+    else:
+        config.read("config.ini")
+    return config
+
+
+# code for getting settings out of the config:
+def getSetting(section, setting):
+    """
+    :param section: the section where the setting is
+    :param setting: the setting to return
+    :return: the value of the requested setting
+    """
+    config = getConfig()
+    value = config.get(section, setting)
+    return value
 
 #   setup for logging, one log for the program and one for logging hashes as integrity check.
 logFormatter = logging.Formatter('%(asctime)s %(levelname)s %(message)s')
@@ -46,13 +87,13 @@ integrityHandler.setFormatter(integrityLogFormatter)
 integrityLogger.addHandler(integrityHandler)
 integrityLogger.setLevel(logging.INFO)
 
-# connectie opzetten voor redis
+# setting up connection to redis:
 r_serv = redis.StrictRedis(
-    host=config.getSetting('redis', 'address'),
-    port=config.getSetting('redis', 'port'),
-    db=config.getSetting('redis', 'db'))
+    host=getSetting('redis', 'address'),
+    port=getSetting('redis', 'port'),
+    db=getSetting('redis', 'db'))
 
-# test the reddis connection, log if needed.
+# test the redis connection, log if needed.
 try:
     response = r_serv.client_list()
     logger.info("Connected to redis")
@@ -60,14 +101,14 @@ except redis.ConnectionError:
     logger.critical("Failed to connect to redis")
     sys.exit()
 
-# connectie opzetten voor mongo
-MongoAddress = config.getSetting('mongo', 'address')
-MongoPort = config.getSetting('mongo', 'port')
-MongoUser = config.getSetting('mongo', 'user')
-MongoPass = config.getSetting('mongo', 'password')
-mongoTimeout = config.getSetting('mongo', 'timeout')
+# setting up connection to mongo
+MongoAddress = getSetting('mongo', 'address')
+MongoPort = getSetting('mongo', 'port')
+MongoUser = getSetting('mongo', 'user')
+MongoPass = getSetting('mongo', 'password')
+mongoTimeout = getSetting('mongo', 'timeout')
 
-# test the mongo connection, kill the program if it fails
+# test the mongo connection, kill the program if it fails, logs the result
 try:
     mongoClient = pymongo.MongoClient('mongodb://'+MongoUser+':' + MongoPass + '@' +MongoAddress+":"+MongoPort,
                                       serverSelectionTimeoutMS=mongoTimeout)
@@ -84,21 +125,22 @@ def int2ip(int_ip):
 
 def main():
     """
-    This function will first call for the function to check the integrity of the db and hashes.
-    Next it will assign the values that are found in the config file to the variable eth. Then
+    This function will assign the values that are found in the config file to the variable eth. Then
     it will start listening to UDP port 53 to catch all the traffic that arrives there. Next,
     it will filter out all the A records that are in the dns response and get the dns names
     that are connected to that A records. Lastly it will get the current system time and
     call for the function writes the data to redis.
     """
-    checkIntegrity()
-    # grabs the eth port to bind and the list of ignored domains from the config using the config.py module.
-    eth = config.getSetting('setup', 'eth')
-    # ignoredDomains = config.getSetting('setup', 'ignore').split(',')
+
+    if args.checkIntegrity:
+        checkIntegrity()
+    else:
+        pass
+
+    # grabs the eth port to bind from the config file.
+    eth = getSetting('setup', 'eth')
     s = socket.socket(socket.PF_PACKET, socket.SOCK_RAW, socket.SOCK_DGRAM)
     s.bind((eth, 0x0800))
-
-    global srcip, dnsnamen, dstip
 
     while True:
         data, addr = s.recvfrom(1024)
@@ -161,7 +203,7 @@ def toRedis(dstip, srcip, dnsname, timestamp):
     """
     global teller
 
-    ignoreDom = config.getSetting('setup', 'ignore')
+    ignoreDom = getSetting('setup', 'ignore')
 
     if dnsname in ignoreDom:
         pass
@@ -174,18 +216,24 @@ def toRedis(dstip, srcip, dnsname, timestamp):
                            "vt", VTHandler(r_serv.hget("_id" + str(teller), "name"))))
         vtThread.start()
 
-        # haalt info vanuit farsight op, moet mogelijk in try/except block?
+        # start thread to get info from farsight
         fsThread = threading.Thread(target=FSHandler, args=(answer["source"],))
         fsThread.start()
 
+        # start thread to get info from virustotal
         awThread = threading.Thread(target=apiWatcher, args=(vtThread, fsThread,  teller))
         awThread.start()
 
-        #print r_serv.hgetall("_id" + str(teller))
-
 ipTeller = 0
 
+
 def hasher(record):
+    """
+    This function gets a record and bases a hash on its ID, the source, the destination and the timestamp.
+    The hash is then written to a log together with the records ID for future verification purposes.
+    :param record: a record as stored in redis and written to mongo
+    :return: None
+    """
     tohash = record['_id'] + record['source'] + record['destination'] + record['timestamp']
     hash_object = hashlib.md5(tohash)
     hash = hash_object.hexdigest()
@@ -193,21 +241,39 @@ def hasher(record):
 
 
 def checkIntegrity():
+    """
+    This function opens the integrity log, reads it line by line and splits the MD5 values and ID's, for each ID it
+    retrieves the record from mongoDB and recreates the hash. This hash is then compared to the hash as stored in the
+    recordIntegrity log. If these hashes are the same the record in the database wasnt tempered with. In case they
+    are not the same, the ID is added to the list of wrongIDs, when the function iterated over the entire log it reports
+    a count of faulty records and gives a list of the IDs that seem to be tempered with.
+    :return: None
+    """
     with open('recordIntegrity.log') as f:
+        wrong_hashes = 0
+        wrong_ids = []
         for line in f:
             list = line.split()
             id = list[1]
             md5 = list[3]
             db = mongoClient.yapdns
             record = db.dnsinfo.find_one({"_id":id})
-            #build something to base the hash on
+            # build something to base the hash on
             tohash = record['_id'] + record['source'] + record['destination'] + record['timestamp']
             hash_object = hashlib.md5(tohash)
             hash = hash_object.hexdigest()
             if hash == md5:
-                print id+ " checks out"
+                pass
             else:
-                print id + " does not check out"
+                wrong_hashes += 1
+                wrong_ids.append(id)
+        if wrong_hashes > 0:
+            logger.warning("A total of " + str(wrong_hashes) + " records seem invalid.")
+            logger.warning("The id's of these records are: "+",".join(wrong_ids))
+            logger.warning("This message can be read back in yapdns.log")
+        else:
+            print "All hashes are valid."
+        sys.exit()
 
 
 def apiWatcher(vtThread, fsThread, id):
@@ -237,8 +303,8 @@ def FSHandler(srcip):
     global ipTeller
 
     request = fsReq.DnsdbClient(
-        server=config.getSetting("dnsdb", "endpoint"),
-        apikey=config.getSetting("dnsdb", "key")
+        server=getSetting("dnsdb", "endpoint"),
+        apikey=getSetting("dnsdb", "key")
     )
 
     geo = pygeoip.GeoIP("GeoIPASNum.dat")
@@ -272,10 +338,10 @@ def VTHandler(name):
     :return: value based on the number of hits that VirusTotal gives
     """
     request = vtReq.VirusTotalQuery(
-        endpoint=config.getSetting("virustotal", "endpoint"),
-        apikey=config.getSetting("virustotal", "key"),
-        reqLimit=config.getSetting("virustotal", "reqLimit"),
-        reqTime=config.getSetting("virustotal", "reqTimeframe")
+        endpoint=getSetting("virustotal", "endpoint"),
+        apikey=getSetting("virustotal", "key"),
+        reqLimit=getSetting("virustotal", "reqLimit"),
+        reqTime=getSetting("virustotal", "reqTimeframe")
     )
 
     vtPos = request.handleRequest("url", name)
