@@ -41,7 +41,7 @@ def getConfig():
     """
     config = ConfigParser.ConfigParser()
     if args.config:
-        config.read(args.config[0])
+        config.read(args.config)
     else:
         config.read("config.ini")
     return config
@@ -65,7 +65,7 @@ consoleFormatter = logging.Formatter('%(levelname)-8s %(message)s')
 logger = logging.getLogger('logger')
 
 # the file handler
-fileHandler = logging.FileHandler('yapdns.log')
+fileHandler = logging.FileHandler(getSetting('setup', 'loglocation')+'yapdns.log')
 fileHandler.setFormatter(logFormatter)
 
 # the console handler
@@ -82,7 +82,7 @@ logger.setLevel(logging.INFO)
 # integrity logger
 integrityLogFormatter = logging.Formatter('%(message)s')
 integrityLogger = logging.getLogger('record_integrity_logger')
-integrityHandler = logging.FileHandler('recordIntegrity.log')
+integrityHandler = logging.FileHandler(getSetting('setup', 'loglocation') + 'recordIntegrity.log')
 integrityHandler.setFormatter(integrityLogFormatter)
 integrityLogger.addHandler(integrityHandler)
 integrityLogger.setLevel(logging.INFO)
@@ -249,7 +249,7 @@ def checkIntegrity():
     a count of faulty records and gives a list of the IDs that seem to be tempered with.
     :return: None
     """
-    with open('recordIntegrity.log') as f:
+    with open(getSetting('setup', 'loglocation')+'recordIntegrity.log') as f:
         wrong_hashes = 0
         wrong_ids = []
         for line in f:
@@ -262,9 +262,7 @@ def checkIntegrity():
             tohash = record['_id'] + record['source'] + record['destination'] + record['timestamp']
             hash_object = hashlib.md5(tohash)
             hash = hash_object.hexdigest()
-            if hash == md5:
-                pass
-            else:
+            if not hash == md5:
                 wrong_hashes += 1
                 wrong_ids.append(id)
         if wrong_hashes > 0:
