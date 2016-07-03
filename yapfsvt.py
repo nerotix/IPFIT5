@@ -187,7 +187,7 @@ else:
 
 def toRedis(dstip, srcip, dnsname, timestamp):
     """
-    This function check whether the dns name is in the list ignoreDom,
+    This function checks whether the dns name is in the list ignoreDom,
     which is located in the config file. If the dnsname is in that list,
     the package is ignored. If it's not in that list, the package is handled.
     The teller will be upped by 1 every time the package is handled and
@@ -289,7 +289,7 @@ def apiWatcher(vtThread, fsThread, id):
     fsThread.join()
     toMongo(id)
 
-
+locID = 0
 def FSHandler(srcip):
     """
     This function creates an object from the farsight script with the values
@@ -297,7 +297,8 @@ def FSHandler(srcip):
     does a request with the param to the farsight database. Next, it checks how
     many company's are attached to 1 IP-address, if that is more than 5, it will
     send the value "FastFlux" to the Redis database, else it will send the value
-    "Clean" to the database.
+    "Clean" to the database. Lastly it will get the longitude and latitude from
+    the scrip package and store these in Redis, which eventually, will be in MongoDB.
     :param srcip: IP-address from where the dns package came from
     """
     global ipTeller
@@ -324,8 +325,19 @@ def FSHandler(srcip):
                     r_serv.hset("_id" + str(teller), "fs", "FastFlux")
                 else:
                     r_serv.hset("_id" + str(teller), "fs", "Clean")
+
     except Exception:
         pass
+
+    global locID
+    gi = pygeoip.GeoIP('GeoLiteCity.dat')
+    locatie = gi.record_by_addr(srcip)
+    lon = str(locatie['longitude'])
+    lat = str(locatie['latitude'])
+    latlon = lat + ", " + lon
+    locID += 1
+    r_serv.hset("locID" + str(locID), "locID" + str(locID), latlon)
+    r_serv.hset("_id" + str(teller), "location", r_serv.hget("locID" + str(locID), "locID" + str(locID)))
 
 
 def VTHandler(name):
