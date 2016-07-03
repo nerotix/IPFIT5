@@ -328,16 +328,18 @@ def FSHandler(srcip):
 
     except Exception:
         pass
-
-    global locID
-    gi = pygeoip.GeoIP('GeoLiteCity.dat')
-    locatie = gi.record_by_addr(srcip)
-    lon = str(locatie['longitude'])
-    lat = str(locatie['latitude'])
-    latlon = lat + ", " + lon
-    locID += 1
-    r_serv.hset("locID" + str(locID), "locID" + str(locID), latlon)
-    r_serv.hset("_id" + str(teller), "location", r_serv.hget("locID" + str(locID), "locID" + str(locID)))
+    try:
+        global locID
+        gi = pygeoip.GeoIP('GeoLiteCity.dat')
+        locatie = gi.record_by_addr(srcip)
+        lon = str(locatie['longitude'])
+        lat = str(locatie['latitude'])
+        latlon = lat + ", " + lon
+        locID += 1
+        r_serv.hset("locID" + str(locID), "locID" + str(locID), latlon)
+        r_serv.hset("_id" + str(teller), "location", r_serv.hget("locID" + str(locID), "locID" + str(locID)))
+    except:
+        pass
 
 
 def VTHandler(name):
